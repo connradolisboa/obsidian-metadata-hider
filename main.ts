@@ -473,7 +473,7 @@ function genAllCSS(plugin: MetadataHider): string {
 	content.push(genCSS(
 		string2list(plugin.settings.propertiesVisible),
 		'/* * Always visible */',
-		' { display: flex; }'
+		' { display: flex !important; }'
 	));
 
 	return content.join('\n') + '\n';
