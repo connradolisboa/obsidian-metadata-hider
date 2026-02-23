@@ -52,7 +52,12 @@ export default class MetadataHider extends Plugin {
 		const items = metadataElement.querySelectorAll('.tree-item');
 		items.forEach(item => {
 			const inner = item.querySelector('.tree-item-inner');
-			if (inner && inner.textContent && propertiesInvisible.includes(inner.textContent)) {
+			const key = (item as HTMLElement).dataset?.propertyKey
+				?? inner?.textContent?.trim()
+				?? '';
+			const normalizedKey = key.toLowerCase();
+			const match = propertiesInvisible.some(name => name.toLowerCase() === normalizedKey);
+			if (match) {
 				item.classList.add('mh-hide');
 			} else {
 				item.classList.remove('mh-hide');
@@ -197,7 +202,7 @@ function genCSS(properties: string[], cssPrefix: string, cssSuffix: string, pare
 	let body: string[] = [];
 	parentSelector = parentSelector ? parentSelector + " " : "";
 	for (let property of properties) {
-		body.push(`${parentSelector}.metadata-container > .metadata-content > .metadata-properties > .metadata-property[data-property-key="${escapeCSSAttrValue(property.trim())}"]`);
+		body.push(`${parentSelector}.metadata-container > .metadata-content > .metadata-properties > .metadata-property[data-property-key="${escapeCSSAttrValue(property.trim().toLowerCase())}"]`);
 	}
 	const sep = "\n";
 	return cssPrefix + sep + body.join(',' + sep) + sep + cssSuffix + "\n\n";
@@ -211,10 +216,11 @@ function genAllCSS(plugin: MetadataHider): string {
 			// Show all metadata when it is focused
 			`.metadata-container.is-active .metadata-property { display: flex !important; }`,
 			/* * Hide the metadata that is empty */
-			`.metadata-property:has(.metadata-property-value .mod-truncate:empty),`,
-			`.metadata-property:has(.metadata-property-value input.metadata-input[type="number"]:placeholder-shown),`,
-			`.metadata-property[data-property-type="text"]:has(input[type="date"]),`,
-			`.metadata-property:has(.metadata-property-value .multi-select-container > .multi-select-input:first-child) {`,
+			`.metadata-container .metadata-property:has(.metadata-property-value .mod-truncate:empty),`,
+			`.metadata-container .metadata-property[data-property-type="number"]:has(input.metadata-input:not([value]):not(:focus)),`,
+			`.metadata-container .metadata-property[data-property-type="text"]:has(input[type="date"]),`,
+			`.metadata-container .metadata-property:has(.metadata-property-value .multi-select-container > .multi-select-input:first-child),`,
+			`.metadata-container .metadata-property[data-property-type="checkbox"]:has(input[type="checkbox"]:not(:checked)) {`,
 			`	display: none;`,
 			`}`,
 		]);
@@ -227,7 +233,7 @@ function genAllCSS(plugin: MetadataHider): string {
 
 	if (s.propertyHideAll.trim()) {
 		content.push([
-			`.metadata-container:has(.metadata-property[data-property-key="${escapeCSSAttrValue(s.propertyHideAll.trim())}"] input[type="checkbox"]:checked) {`,
+			`.metadata-container:has(.metadata-property[data-property-key="${escapeCSSAttrValue(s.propertyHideAll.trim().toLowerCase())}"] input[type="checkbox"]:checked) {`,
 			`  display: none;`,
 			`}`,
 			``,
