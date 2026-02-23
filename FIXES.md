@@ -28,9 +28,9 @@ to:
 
 Also update the `is-active` show-all rule and the side-dock override to stay consistent.
 
-- [ ] Scope all `hideEmptyEntry` selectors to `.metadata-container`
-- [ ] Re-test: Bases filter placeholder is no longer hidden
-- [ ] Re-test: Normal property table still hides empty entries
+- [x] Scope all `hideEmptyEntry` selectors to `.metadata-container`
+- [x] Re-test: Bases filter placeholder is no longer hidden
+- [x] Re-test: Normal property table still hides empty entries
 
 ---
 
@@ -51,9 +51,9 @@ in CSS attribute selectors. Change `escapeCSSAttrValue(property.trim())` to
 **Fix (option B — alternative):** Use the case-insensitive attribute selector flag `[... i]`:
 `.metadata-property[data-property-key="myProp" i]`. Simpler change, but wider match surface.
 
-- [ ] Normalize to `.toLowerCase()` in `genCSS()` when building the `data-property-key` selector
-- [ ] Normalize to `.toLowerCase()` in `genAllCSS()` for the `propertyHideAll` selector
-- [ ] Re-test: a property named `MyTag` or `camelCase` is now correctly hidden
+- [x] Normalize to `.toLowerCase()` in `genCSS()` when building the `data-property-key` selector
+- [x] Normalize to `.toLowerCase()` in `genAllCSS()` for the `propertyHideAll` selector
+- [x] Re-test: a property named `MyTag` or `camelCase` is now correctly hidden
 
 ---
 
@@ -82,8 +82,8 @@ if (match) {
 }
 ```
 
-- [ ] Replace the `inner.textContent` comparison with `data-property-key`-first + case-normalized comparison
-- [ ] Re-test: a `PascalCase` or `camelCase` property is now hidden in the all-properties panel
+- [x] Replace the `inner.textContent` comparison with `data-property-key`-first + case-normalized comparison
+- [x] Re-test: a `PascalCase` or `camelCase` property is now hidden in the all-properties panel
 
 ---
 
@@ -106,9 +106,9 @@ An unchecked checkbox renders with `data-property-type="checkbox"` and
 Note: This hides any checkbox property whose value is `false` (unchecked). If that is
 not the desired behavior, it could be gated behind a separate setting.
 
-- [ ] Add the unchecked-checkbox selector to the `hideEmptyEntry` block
-- [ ] Verify the selector is also excluded from the Bases-scoping issue fixed in Fix 1
-- [ ] Re-test: a checkbox property set to `false` is hidden; one set to `true` remains visible
+- [x] Add the unchecked-checkbox selector to the `hideEmptyEntry` block
+- [x] Verify the selector is also excluded from the Bases-scoping issue fixed in Fix 1
+- [x] Re-test: a checkbox property set to `false` is hidden; one set to `true` remains visible
 
 ---
 
@@ -135,18 +135,18 @@ A candidate selector that does not rely on `placeholder`:
 ```
 or check if Obsidian adds an `is-empty` class on the property row.
 
-- [ ] Inspect Obsidian DOM for an empty number property field to confirm actual structure
-- [ ] Update the number-empty selector to be reliable and scoped to `.metadata-container`
-- [ ] Re-test: an empty number property is hidden; a number property with value `0` or positive stays visible
+- [x] Inspect Obsidian DOM for an empty number property field to confirm actual structure
+- [x] Update the number-empty selector to be reliable and scoped to `.metadata-container`
+- [x] Re-test: an empty number property is hidden; a number property with value `0` or positive stays visible
 
 ---
 
 ## Final checks
 
-- [ ] Run `npm run build` with no TypeScript errors
-- [ ] Test in a real vault: empty text / date / multi-select properties still hidden
-- [ ] Test in a real vault: Bases view filter placeholder is **not** hidden
-- [ ] Test in a real vault: `camelCase`, `PascalCase`, and `lowercase` entry names all hide correctly
-- [ ] Test in a real vault: unchecked checkbox property is hidden; checked one is visible
-- [ ] Test in a real vault: all-properties panel hides the right entries regardless of key casing
+- [x] Run `npm run build` with no TypeScript errors
+- [x] Test in a real vault: empty text / date / multi-select properties still hidden
+- [x] Test in a real vault: Bases view filter placeholder is **not** hidden
+- [x] Test in a real vault: `camelCase`, `PascalCase`, and `lowercase` entry names all hide correctly
+- [x] Test in a real vault: unchecked checkbox property is hidden; checked one is visible
+- [x] Test in a real vault: all-properties panel hides the right entries regardless of key casing
 - [ ] Bump version if releasing (`npm run version`)
