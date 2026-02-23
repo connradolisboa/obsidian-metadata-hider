@@ -48,6 +48,31 @@ const ZH = {
 	}
 }
 
+const ZH_TW = {
+	command: {
+
+	},
+	setting: {
+		entries: {
+			hide: {
+				tableInactive: "在屬性表格中隱藏",
+				tableActive: "總是在屬性表格中隱藏",
+				fileProperties: "在文件屬性中隱藏（側邊欄）",
+				allProperties: "在所有屬性中隱藏（側邊欄）",
+			},
+			toggle: "開關",
+			addEntryToHide: "新增要隱藏的元數據屬性項目",
+		},
+		autoFold: {
+			name: "自動折疊元數據屬性表格",
+			desc: "在開啟筆記時自動折疊。"
+		},
+		headings: {
+			hide: "隱藏元數據屬性",
+		},
+	}
+}
+
 
 export class Locals {
 	static get() {
@@ -56,7 +81,7 @@ export class Locals {
 			case "zh":
 				return ZH;
 			case "zh-tw":
-				return ZH;
+				return ZH_TW;
 			default:
 				return EN;
 		}

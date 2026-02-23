@@ -65,13 +65,18 @@ export default class MetadataHider extends Plugin {
 		await this.loadSettings();
 		this.addSettingTab(new MetadataHiderSettingTab(this.app, this));
 
+		// Delay to ensure the DOM is ready before injecting CSS
+		const DOM_READY_DELAY_MS = 100;
+
 		this.app.workspace.onLayoutReady(() => {
-			setTimeout(() => { this.updateCSS(); }, 100);
+			setTimeout(() => { this.updateCSS(); }, DOM_READY_DELAY_MS);
 		});
 
-		this.app.workspace.on('active-leaf-change', (leaf) => {
-			if (leaf && leaf.view.getViewType() == "all-properties") setTimeout(() => { this.hideInAllProperties(); }, 100);
-		});
+		this.registerEvent(this.app.workspace.on('active-leaf-change', (leaf) => {
+			if (leaf && leaf.view.getViewType() === "all-properties") {
+				setTimeout(() => { this.hideInAllProperties(); }, DOM_READY_DELAY_MS);
+			}
+		}));
 
 		this.registerDomEvent(document, 'focusin', (evt: MouseEvent) => {
 			// console.log('focusin', evt);
@@ -122,12 +127,7 @@ export default class MetadataHider extends Plugin {
 	}
 
 	onunload() {
-		const parentElement = this.styleTag.parentElement;
-		if (parentElement) {
-			parentElement.removeChild(this.styleTag);
-		} else {
-			console.error('Parent element not found.');
-		}
+		this.styleTag?.parentElement?.removeChild(this.styleTag);
 	}
 
 	debounceUpdateCSS = debounce(this.updateCSS, 1000, true);
@@ -172,13 +172,13 @@ export default class MetadataHider extends Plugin {
 			const diff2 = new Set([...union].filter(x => !propertiesInvisibleAlways.includes(x)));
 			const entries: entrySettings[] = [];
 			for (let key of inter) {
-				entries.push({ name: key, hide: { tableInactive: true, tableActive: true } as unknown as entryHideSettings });
+				entries.push({ name: key, hide: { tableInactive: true, tableActive: true, fileProperties: false, allProperties: false } });
 			}
 			for (let key of diff1) {
-				entries.push({ name: key, hide: { tableInactive: true, tableActive: true } as unknown as entryHideSettings });
+				entries.push({ name: key, hide: { tableInactive: true, tableActive: true, fileProperties: false, allProperties: false } });
 			}
 			for (let key of diff2) {
-				entries.push({ name: key, hide: { tableInactive: true } as unknown as entryHideSettings });
+				entries.push({ name: key, hide: { tableInactive: true, tableActive: false, fileProperties: false, allProperties: false } });
 			}
 			this.settings.entries = entries;
 			this.saveSettings();
@@ -188,14 +188,19 @@ export default class MetadataHider extends Plugin {
 
 
 
+function escapeCSSAttrValue(value: string): string {
+	return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function genCSS(properties: string[], cssPrefix: string, cssSuffix: string, parentSelector: string = ""): string {
+	if (properties.length === 0) return "";
 	let body: string[] = [];
 	parentSelector = parentSelector ? parentSelector + " " : "";
 	for (let property of properties) {
-		body.push(`${parentSelector}.metadata-container > .metadata-content > .metadata-properties > .metadata-property[data-property-key="${property.trim()}"]`);
+		body.push(`${parentSelector}.metadata-container > .metadata-content > .metadata-properties > .metadata-property[data-property-key="${escapeCSSAttrValue(property.trim())}"]`);
 	}
-	const sep = " ";
-	return cssPrefix + sep + body.join(',' + sep) + sep + cssSuffix + sep + sep;
+	const sep = "\n";
+	return cssPrefix + sep + body.join(',' + sep) + sep + cssSuffix + "\n\n";
 }
 
 function genAllCSS(plugin: MetadataHider): string {
@@ -222,7 +227,7 @@ function genAllCSS(plugin: MetadataHider): string {
 
 	if (s.propertyHideAll.trim()) {
 		content.push([
-			`.metadata-container:has(.metadata-property[data-property-key="${s.propertyHideAll.trim()}"] input[type="checkbox"]:checked) {`,
+			`.metadata-container:has(.metadata-property[data-property-key="${escapeCSSAttrValue(s.propertyHideAll.trim())}"] input[type="checkbox"]:checked) {`,
 			`  display: none;`,
 			`}`,
 			``,
@@ -416,7 +421,13 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 				cb.setPlaceholder("entry name")
 					.setValue(entrySetting.name)
 					.onChange(async (newValue) => {
-						this.plugin.settings.entries[index].name = newValue.trim();
+						const trimmed = newValue.trim();
+						const isDuplicate = this.plugin.settings.entries.some((e, i) => i !== index && e.name === trimmed && trimmed !== "");
+						if (isDuplicate) {
+							new Notice(`Property "${trimmed}" already exists!`);
+							return;
+						}
+						this.plugin.settings.entries[index].name = trimmed;
 						await this.plugin.saveSettings();
 						this.plugin.debounceUpdateCSS();
 					});
