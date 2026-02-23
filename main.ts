@@ -176,10 +176,6 @@ export default class MetadataHider extends Plugin {
 			activeFile ? this.app.metadataCache.getFileCache(activeFile)?.frontmatter : null
 		);
 
-		// Quick exit when no DOM-path entries exist
-		const hasDomEntries = this.settings.entries.some(e => e.isRegex || e.valueCondition?.trim());
-		if (!hasDomEntries) return;
-
 		const containers = document.querySelectorAll(
 			'.workspace-leaf.mod-active .metadata-container, .workspace-leaf-content[data-type="file-properties"] .metadata-container'
 		);
@@ -190,6 +186,7 @@ export default class MetadataHider extends Plugin {
 
 			container.querySelectorAll<HTMLElement>('.metadata-property[data-property-key]').forEach(prop => {
 				const key = prop.dataset?.propertyKey ?? '';
+				let matched = false;
 
 				// First-match-wins: iterate all entries in order
 				for (const entry of this.settings.entries) {
@@ -198,6 +195,7 @@ export default class MetadataHider extends Plugin {
 					if (!matchesValueCondition(entry, key, frontmatterLower, prop)) continue;
 
 					// First match found
+					matched = true;
 					if (!entry.isRegex && !entry.valueCondition?.trim()) {
 						// CSS entry claims this property — clear any stale DOM overrides
 						prop.classList.remove('mh-hide', 'mh-show');
@@ -217,6 +215,11 @@ export default class MetadataHider extends Plugin {
 						prop.classList.remove('mh-show');
 					}
 					break;
+				}
+
+				// No entry matched — clear any stale DOM classes so CSS can take over
+				if (!matched) {
+					prop.classList.remove('mh-hide', 'mh-show');
 				}
 			});
 		});
@@ -706,7 +709,9 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 		const datalistId = 'mh-property-autocomplete';
 		const datalist = containerEl.createEl('datalist');
 		datalist.id = datalistId;
-		const knownProperties = Object.keys((this.plugin.app.metadataCache as any).getAllPropertyInfos?.() ?? {});
+		const knownProperties = Object.values((this.plugin.app.metadataCache as any).getAllPropertyInfos?.() ?? {})
+			.map((info: any) => info.name as string)
+			.filter(Boolean);
 		knownProperties.sort().forEach(key => {
 			datalist.createEl('option', { value: key });
 		});
