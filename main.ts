@@ -10,10 +10,12 @@ interface entryHideSettings {
 }
 interface entrySettings {
 	name: string;
-	isRegex: boolean;      // treat name as a JS regex pattern
-	folderFilter: string;  // apply only in files under this folder path (empty = all)
-	tagFilter: string;     // apply only in files with this tag (empty = all)
-	hide: entryHideSettings;
+	isRegex: boolean;       // treat name as a JS regex pattern
+	folderFilter: string;   // apply only in files under this folder path (empty = all)
+	tagFilter: string;      // apply only in files with this tag (empty = all)
+	action: 'hide' | 'show'; // Phase 1: default 'hide'
+	valueCondition: string;  // Phase 2: fire only when property value matches (empty = any)
+	hide: entryHideSettings; // only meaningful when action === 'hide'
 }
 interface MetadataHiderSettings {
 	autoFold: boolean;
@@ -67,42 +69,108 @@ function matchesEntryName(propertyKey: string, entry: entrySettings): boolean {
 	return normalizedKey === entry.name.toLowerCase();
 }
 
+/** Build a lowercased frontmatter lookup map. Array values are preserved as string arrays. */
+function buildFrontmatterLower(frontmatter: Record<string, any> | null | undefined): Record<string, string | string[]> {
+	if (!frontmatter) return {};
+	const result: Record<string, string | string[]> = {};
+	for (const [k, v] of Object.entries(frontmatter)) {
+		if (Array.isArray(v)) {
+			result[k.toLowerCase()] = v.map(item => String(item ?? '').toLowerCase());
+		} else {
+			result[k.toLowerCase()] = String(v ?? '').toLowerCase();
+		}
+	}
+	return result;
+}
+
+/**
+ * Phase 2: Returns true if the entry's valueCondition matches the property's current value.
+ * Empty valueCondition always returns true (matches any value).
+ * Reads DOM input first for live feedback; falls back to frontmatter.
+ */
+function matchesValueCondition(
+	entry: entrySettings,
+	key: string,
+	frontmatterLower: Record<string, string | string[]>,
+	propEl: HTMLElement | null
+): boolean {
+	const cond = entry.valueCondition?.trim();
+	if (!cond) return true;
+
+	const conditions = cond.split(',').map(v => v.trim().toLowerCase()).filter(v => v !== '');
+	if (conditions.length === 0) return true;
+
+	// Prefer DOM input value for live feedback while editing
+	const domInput = propEl?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input:not([type="checkbox"]), textarea');
+	if (domInput) {
+		return conditions.includes(domInput.value.toLowerCase().trim());
+	}
+
+	// Fall back to frontmatter
+	const fmVal = frontmatterLower[key];
+	if (fmVal === undefined) return false;
+
+	if (Array.isArray(fmVal)) {
+		return fmVal.some(v => conditions.includes(v));
+	}
+	return conditions.includes(fmVal as string);
+}
+
 export default class MetadataHider extends Plugin {
 	settings: MetadataHiderSettings;
 	styleTag: HTMLStyleElement;
 	isMetadataFocused: boolean;
+
+	debounceUpdateCSS = debounce(this.updateCSS, 1000, true);
+	debounceApplyConditional = debounce(() => this.applyConditionalHiding(), 200, true);
 
 	hideInAllProperties() {
 		const metadataElement = document.querySelector('.workspace-leaf-content[data-type="all-properties"] .view-content');
 		if (metadataElement == null) { return; }
 
 		const activeFile = this.app.workspace.getActiveFile();
-		const hiddenEntries = this.settings.entries.filter(entry =>
-			entry.hide.allProperties && isEntryApplicable(entry, activeFile, this.app)
+		const frontmatterLower = buildFrontmatterLower(
+			activeFile ? this.app.metadataCache.getFileCache(activeFile)?.frontmatter : null
 		);
 
 		const items = metadataElement.querySelectorAll('.tree-item');
 		items.forEach(item => {
 			const inner = item.querySelector('.tree-item-inner');
-			const key = (item as HTMLElement).dataset?.propertyKey
-				?? inner?.textContent?.trim()
-				?? '';
-			const match = hiddenEntries.some(entry => matchesEntryName(key, entry));
-			if (match) {
-				item.classList.add('mh-hide');
-			} else {
+			const key = (
+				(item as HTMLElement).dataset?.propertyKey ?? inner?.textContent?.trim() ?? ''
+			).toLowerCase();
+
+			let matched = false;
+			for (const entry of this.settings.entries) {
+				if (!matchesEntryName(key, entry)) continue;
+				if (!isEntryApplicable(entry, activeFile, this.app)) continue;
+				if (!matchesValueCondition(entry, key, frontmatterLower, null)) continue;
+
+				matched = true;
+				const shouldHide = entry.action === 'hide' && entry.hide.allProperties;
+				item.classList.toggle('mh-hide', shouldHide);
+				break; // first match wins
+			}
+			if (!matched) {
 				item.classList.remove('mh-hide');
 			}
 		});
 	}
 
-	applyRegexHiding() {
-		const regexEntries = this.settings.entries.filter(e => e.isRegex);
-		if (regexEntries.length === 0) return;
-
+	/**
+	 * Phase 1+2: Handles DOM-path entries (regex and/or valueCondition) using first-match-wins.
+	 * Replaces the former applyRegexHiding(). Also coordinates with CSS-path entries: when a
+	 * CSS entry is the first match for a property, DOM overrides are cleared so CSS takes effect.
+	 */
+	applyConditionalHiding() {
 		const activeFile = this.app.workspace.getActiveFile();
-		const applicableEntries = regexEntries.filter(e => isEntryApplicable(e, activeFile, this.app));
-		if (applicableEntries.length === 0) return;
+		const frontmatterLower = buildFrontmatterLower(
+			activeFile ? this.app.metadataCache.getFileCache(activeFile)?.frontmatter : null
+		);
+
+		// Quick exit when no DOM-path entries exist
+		const hasDomEntries = this.settings.entries.some(e => e.isRegex || e.valueCondition?.trim());
+		if (!hasDomEntries) return;
 
 		const containers = document.querySelectorAll(
 			'.workspace-leaf.mod-active .metadata-container, .workspace-leaf-content[data-type="file-properties"] .metadata-container'
@@ -114,14 +182,34 @@ export default class MetadataHider extends Plugin {
 
 			container.querySelectorAll<HTMLElement>('.metadata-property[data-property-key]').forEach(prop => {
 				const key = prop.dataset?.propertyKey ?? '';
-				const shouldHide = applicableEntries.some(entry => {
-					if (!matchesEntryName(key, entry)) return false;
-					if (inFileProps) return entry.hide.fileProperties;
-					if (entry.hide.tableActive) return true;
-					if (entry.hide.tableInactive && !isActive) return true;
-					return false;
-				});
-				prop.classList.toggle('mh-hide', shouldHide);
+
+				// First-match-wins: iterate all entries in order
+				for (const entry of this.settings.entries) {
+					if (!matchesEntryName(key, entry)) continue;
+					if (!isEntryApplicable(entry, activeFile, this.app)) continue;
+					if (!matchesValueCondition(entry, key, frontmatterLower, prop)) continue;
+
+					// First match found
+					if (!entry.isRegex && !entry.valueCondition?.trim()) {
+						// CSS entry claims this property — clear any stale DOM overrides
+						prop.classList.remove('mh-hide', 'mh-show');
+						break;
+					}
+
+					// DOM entry — apply based on action and targets
+					if (entry.action === 'show') {
+						prop.classList.add('mh-show');
+						prop.classList.remove('mh-hide');
+					} else {
+						let shouldHide = false;
+						if (inFileProps) shouldHide = entry.hide.fileProperties;
+						else if (entry.hide.tableActive) shouldHide = true;
+						else if (entry.hide.tableInactive && !isActive) shouldHide = true;
+						prop.classList.toggle('mh-hide', shouldHide);
+						prop.classList.remove('mh-show');
+					}
+					break;
+				}
 			});
 		});
 	}
@@ -140,7 +228,7 @@ export default class MetadataHider extends Plugin {
 			if (leaf && leaf.view.getViewType() === "all-properties") {
 				setTimeout(() => { this.hideInAllProperties(); }, DOM_READY_DELAY_MS);
 			}
-			setTimeout(() => { this.applyRegexHiding(); }, DOM_READY_DELAY_MS);
+			setTimeout(() => { this.applyConditionalHiding(); }, DOM_READY_DELAY_MS);
 		}));
 
 		this.registerDomEvent(document, 'focusin', (evt: MouseEvent) => {
@@ -186,16 +274,28 @@ export default class MetadataHider extends Plugin {
 					this.app.commands.executeCommandById(`editor:toggle-fold-properties`);
 				}
 			}
-			// Re-generate CSS and regex hiding whenever file changes (folder/tag rules may differ)
+			// Re-generate CSS and conditional hiding whenever file changes
 			setTimeout(() => { this.updateCSS(); }, DOM_READY_DELAY_MS);
 		}));
+
+		// Phase 2: Re-evaluate value-condition rules when the metadata cache updates (after save)
+		this.registerEvent(this.app.metadataCache.on('changed', (_file: TFile) => {
+			this.debounceApplyConditional();
+		}));
+
+		// Phase 2: Live feedback while the user is editing a property value
+		this.registerDomEvent(document, 'input', (evt: Event) => {
+			const target = evt.target as HTMLElement | null;
+			if (target?.closest('.metadata-container')) {
+				this.debounceApplyConditional();
+			}
+		});
 	}
 
 	onunload() {
 		this.styleTag?.parentElement?.removeChild(this.styleTag);
 	}
 
-	debounceUpdateCSS = debounce(this.updateCSS, 1000, true);
 	updateCSS() {
 		this.styleTag = document.createElement('style');
 		this.styleTag.id = 'css-metadata-hider';
@@ -210,15 +310,15 @@ export default class MetadataHider extends Plugin {
 		this.styleTag.innerText = genAllCSS(this);
 
 		this.hideInAllProperties();
-		this.applyRegexHiding();
+		this.applyConditionalHiding();
 	}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 		this.upgradeSettingsToVersion1();
-		// Ensure new fields have defaults on existing entries (from older saved data)
+		// Ensure all fields have defaults on existing entries (handles older saved data)
 		this.settings.entries = (this.settings.entries as any[]).map(e =>
-			Object.assign({ isRegex: false, folderFilter: '', tagFilter: '' }, e)
+			Object.assign({ isRegex: false, folderFilter: '', tagFilter: '', action: 'hide', valueCondition: '' }, e)
 		);
 	}
 
@@ -240,13 +340,13 @@ export default class MetadataHider extends Plugin {
 			const diff2 = new Set([...union].filter(x => !propertiesInvisibleAlways.includes(x)));
 			const entries: entrySettings[] = [];
 			for (let key of inter) {
-				entries.push({ name: key, isRegex: false, folderFilter: '', tagFilter: '', hide: { tableInactive: true, tableActive: true, fileProperties: false, allProperties: false } });
+				entries.push({ name: key, isRegex: false, folderFilter: '', tagFilter: '', action: 'hide', valueCondition: '', hide: { tableInactive: true, tableActive: true, fileProperties: false, allProperties: false } });
 			}
 			for (let key of diff1) {
-				entries.push({ name: key, isRegex: false, folderFilter: '', tagFilter: '', hide: { tableInactive: true, tableActive: true, fileProperties: false, allProperties: false } });
+				entries.push({ name: key, isRegex: false, folderFilter: '', tagFilter: '', action: 'hide', valueCondition: '', hide: { tableInactive: true, tableActive: true, fileProperties: false, allProperties: false } });
 			}
 			for (let key of diff2) {
-				entries.push({ name: key, isRegex: false, folderFilter: '', tagFilter: '', hide: { tableInactive: true, tableActive: false, fileProperties: false, allProperties: false } });
+				entries.push({ name: key, isRegex: false, folderFilter: '', tagFilter: '', action: 'hide', valueCondition: '', hide: { tableInactive: true, tableActive: false, fileProperties: false, allProperties: false } });
 			}
 			this.settings.entries = entries;
 			this.saveSettings();
@@ -271,18 +371,20 @@ function genCSS(properties: string[], cssPrefix: string, cssSuffix: string, pare
 	return cssPrefix + sep + body.join(',' + sep) + sep + cssSuffix + "\n\n";
 }
 
+/**
+ * Phase 1: First-match-wins CSS generation.
+ * Iterates entries in order; the first applicable entry for each property key determines
+ * whether it is hidden or shown. Later entries for the same key are ignored for this file.
+ */
 function genAllCSS(plugin: MetadataHider): string {
 	const s = plugin.settings;
 	const activeFile = plugin.app.workspace.getActiveFile();
 
-	// Filter entries by folder/tag context; regex entries are handled via DOM, not CSS
-	const applicableEntries = s.entries.filter(e => isEntryApplicable(e, activeFile, plugin.app));
-	const cssEntries = applicableEntries.filter(e => !e.isRegex);
-
 	let content: string[] = [];
 
-	// Base rule so DOM-applied .mh-hide works everywhere (regex + all-properties)
-	content.push(`.metadata-property.mh-hide { display: none !important; }\n`);
+	// Base classes for DOM-managed visibility (regex / valueCondition / allProperties paths)
+	content.push(`.metadata-property.mh-hide { display: none !important; }`);
+	content.push(`.metadata-property.mh-show { display: flex !important; }`);
 
 	if (s.hideEmptyEntry) {
 		content = content.concat([
@@ -300,7 +402,7 @@ function genAllCSS(plugin: MetadataHider): string {
 	}
 
 	if (!s.hideEmptyEntryInSideDock) {
-		content.push(`.mod-sidedock .metadata-property { display: flex !important; }`,)
+		content.push(`.mod-sidedock .metadata-property { display: flex !important; }`);
 	}
 
 	if (s.propertyHideAll.trim()) {
@@ -312,31 +414,49 @@ function genAllCSS(plugin: MetadataHider): string {
 		].join('\n'));
 	}
 
-	content.push(genCSS(
-		cssEntries.filter((e: entrySettings) => e.hide.fileProperties).map(e => e.name),
-		'/* * Invisible in file properties */',
-		' { display: none !important; }',
-		`.workspace-leaf-content[data-type="file-properties"] `
-	))
-	content.push(genCSS(
-		cssEntries.filter((e: entrySettings) => e.hide.tableInactive || e.hide.tableActive).map(e => e.name),
-		'/* * Invisible in properties table (in .mod-root) */',
-		' { display: none; }'
-	))
-	content.push(genCSS(
-		cssEntries.filter((e: entrySettings) => e.hide.tableActive).map(e => e.name),
-		'/* * Always invisible in properties table (in .mod-root) */',
-		' { display: none !important; }',
-		".workspace-split:not(.mod-sidedock) "
-	))
+	// First-match-wins: only non-regex, no-valueCondition entries are handled here via CSS.
+	// Regex and valueCondition entries are handled by applyConditionalHiding() via the DOM.
+	const claimed = new Set<string>();
 
+	const propSel = (key: string, parentSelector = '') => {
+		const parent = parentSelector ? parentSelector + ' ' : '';
+		return `${parent}.metadata-container > .metadata-content > .metadata-properties > .metadata-property[data-property-key="${escapeCSSAttrValue(key)}"]`;
+	};
+
+	for (const entry of s.entries) {
+		if (entry.isRegex || entry.valueCondition?.trim()) continue; // DOM path
+		if (!isEntryApplicable(entry, activeFile, plugin.app)) continue;
+
+		const key = entry.name.trim().toLowerCase();
+		if (!key) continue;
+		if (claimed.has(key)) continue; // already claimed by a higher-priority entry
+		claimed.add(key);
+
+		if (entry.action === 'show') {
+			content.push(`/* show: ${key} */`);
+			content.push(`${propSel(key)} { display: flex !important; }`);
+		} else {
+			// action === 'hide'
+			if (entry.hide.fileProperties) {
+				content.push(propSel(key, `.workspace-leaf-content[data-type="file-properties"]`) + ` { display: none !important; }`);
+			}
+			if (entry.hide.tableInactive || entry.hide.tableActive) {
+				content.push(`${propSel(key)} { display: none; }`);
+			}
+			if (entry.hide.tableActive) {
+				content.push(propSel(key, `.workspace-split:not(.mod-sidedock)`) + ` { display: none !important; }`);
+			}
+		}
+	}
+
+	// propertiesVisible — unconditional show rules appended last (backward compat)
 	content.push(genCSS(
 		string2list(plugin.settings.propertiesVisible),
 		'/* * Always visible */',
 		' { display: flex; }'
-	))
+	));
 
-	return content.join(' ')
+	return content.join('\n') + '\n';
 }
 
 
@@ -368,9 +488,9 @@ class ImportSettingsModal extends Modal {
 							throw new Error('Expected a JSON object');
 						}
 						Object.assign(this.plugin.settings, imported);
-						// Ensure new fields have defaults
+						// Ensure new fields have defaults on imported entries
 						this.plugin.settings.entries = (this.plugin.settings.entries as any[]).map(e =>
-							Object.assign({ isRegex: false, folderFilter: '', tagFilter: '' }, e)
+							Object.assign({ isRegex: false, folderFilter: '', tagFilter: '', action: 'hide', valueCondition: '' }, e)
 						);
 						await this.plugin.saveSettings();
 						this.plugin.debounceUpdateCSS();
@@ -509,13 +629,13 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 		});
 
 		let addEntryButton = new Setting(containerEl)
-			.setName(ts.entries.addEntryToHide)
+			.setName(ts.entries.addEntry)
 			.addButton((button: ButtonComponent) => {
-				button.setTooltip("Add new entry")
+				button.setTooltip("Add new rule")
 					.setButtonText("+")
 					.setCta().onClick(async () => {
 						if (this.plugin.settings.entries.filter(e => e.name === "").length > 0) {
-							new Notice(`There is still unnamed entry!`);
+							new Notice(`There is still an unnamed entry!`);
 							return;
 						}
 						this.plugin.settings.entries.push({
@@ -523,6 +643,8 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 							isRegex: false,
 							folderFilter: "",
 							tagFilter: "",
+							action: "hide",
+							valueCondition: "",
 							hide: {
 								tableInactive: true,
 								tableActive: false,
@@ -535,10 +657,13 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 					});
 			})
 		addEntryButton.descEl.append(
+			createDiv({ text: `Action: Hide — apply hide targets below | Show — always show the property` }),
 			createDiv({ text: `${ts.entries.toggle} 1: ${ts.entries.hide.tableInactive}` }),
 			createDiv({ text: `${ts.entries.toggle} 2: ${ts.entries.hide.tableActive}` }),
 			createDiv({ text: `${ts.entries.toggle} 3: ${ts.entries.hide.fileProperties}` }),
 			createDiv({ text: `${ts.entries.toggle} 4: ${ts.entries.hide.allProperties}` }),
+			createDiv({ text: `Value: fire rule only when property value matches (comma-separated, case-insensitive)` }),
+			createDiv({ text: `Rules are evaluated top-to-bottom; the first matching rule wins.` }),
 		)
 
 		this.plugin.settings.entries.forEach((entrySetting, index) => {
@@ -550,18 +675,28 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 				cb.setPlaceholder(entrySetting.isRegex ? 'regex pattern' : 'property name')
 					.setValue(entrySetting.name)
 					.onChange(async (newValue) => {
-						const trimmed = newValue.trim();
-						const isDuplicate = this.plugin.settings.entries.some((e, i) => i !== index && e.name === trimmed && trimmed !== "");
-						if (isDuplicate) {
-							new Notice(`Property "${trimmed}" already exists!`);
-							return;
-						}
-						this.plugin.settings.entries[index].name = trimmed;
+						// Phase 1a: duplicate-name check removed — multiple rules for the same
+						// property are now allowed (first-match-wins determines which fires).
+						this.plugin.settings.entries[index].name = newValue.trim();
 						await this.plugin.saveSettings();
 						this.plugin.debounceUpdateCSS();
 					});
-				// Attach shared datalist for autocomplete (most useful for exact-match entries)
 				cb.inputEl.setAttribute('list', datalistId);
+			});
+
+			// Action toggle button: Hide ↔ Show
+			s.addButton(btn => {
+				const isShow = entrySetting.action === 'show';
+				btn.setButtonText(isShow ? 'Show' : 'Hide')
+					.setTooltip('Toggle between Hide and Show action')
+					.onClick(async () => {
+						this.plugin.settings.entries[index].action =
+							this.plugin.settings.entries[index].action === 'show' ? 'hide' : 'show';
+						await this.plugin.saveSettings();
+						this.plugin.debounceUpdateCSS();
+						this.display();
+					});
+				if (isShow) btn.setCta();
 			});
 
 			// Regex toggle
@@ -576,32 +711,34 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 					})
 			);
 
-			// Hide-mode toggles (tableInactive / tableActive / fileProperties / allProperties)
-			let toggles: { [key: string]: ToggleComponent } = {};
-			for (let key of ["tableInactive", "tableActive", "fileProperties", "allProperties"]) {
-				s.addToggle((toggle) => {
-					toggles[key] = toggle;
-					toggle
-						.setValue(this.plugin.settings.entries[index].hide[key as keyof entryHideSettings])
-						// @ts-ignore
-						.setTooltip(ts.entries.hide[key])
-						.onChange(async (value) => {
-							this.plugin.settings.entries[index].hide[key as keyof entryHideSettings] = value;
+			// Hide-mode toggles — only shown when action === 'hide'
+			if (entrySetting.action !== 'show') {
+				let toggles: { [key: string]: ToggleComponent } = {};
+				for (let key of ["tableInactive", "tableActive", "fileProperties", "allProperties"]) {
+					s.addToggle((toggle) => {
+						toggles[key] = toggle;
+						toggle
+							.setValue(this.plugin.settings.entries[index].hide[key as keyof entryHideSettings])
+							// @ts-ignore
+							.setTooltip(ts.entries.hide[key])
+							.onChange(async (value) => {
+								this.plugin.settings.entries[index].hide[key as keyof entryHideSettings] = value;
 
-							if (key === "tableInactive" && value === false) {
-								this.plugin.settings.entries[index].hide.tableActive = false;
-								toggles["tableActive"].setValue(false);
-							}
+								if (key === "tableInactive" && value === false) {
+									this.plugin.settings.entries[index].hide.tableActive = false;
+									toggles["tableActive"].setValue(false);
+								}
 
-							if (key === "tableActive" && value === true) {
-								this.plugin.settings.entries[index].hide.tableInactive = true;
-								toggles["tableInactive"].setValue(true);
-							}
+								if (key === "tableActive" && value === true) {
+									this.plugin.settings.entries[index].hide.tableInactive = true;
+									toggles["tableInactive"].setValue(true);
+								}
 
-							await this.plugin.saveSettings();
-							this.plugin.debounceUpdateCSS();
-						});
-				});
+								await this.plugin.saveSettings();
+								this.plugin.debounceUpdateCSS();
+							});
+					});
+				}
 			}
 
 			// Folder filter
@@ -630,9 +767,53 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 				cb.inputEl.style.width = '90px';
 			});
 
+			// Phase 2: Value condition input
+			s.addText(cb => {
+				cb.setPlaceholder('value equals…')
+					.setValue(entrySetting.valueCondition ?? '')
+					.onChange(async (value: string) => {
+						this.plugin.settings.entries[index].valueCondition = value.trim();
+						await this.plugin.saveSettings();
+						this.plugin.debounceUpdateCSS();
+					});
+				cb.inputEl.title = 'Fire rule only when property value equals this. Comma-separate multiple values. Case-insensitive. Leave empty for any value.';
+				cb.inputEl.style.width = '110px';
+			});
+
+			// Move up
+			s.addExtraButton(btn => {
+				btn.setIcon('arrow-up')
+					.setTooltip('Move up (higher priority)')
+					.onClick(async () => {
+						if (index === 0) return;
+						const entries = this.plugin.settings.entries;
+						[entries[index - 1], entries[index]] = [entries[index], entries[index - 1]];
+						await this.plugin.saveSettings();
+						this.plugin.debounceUpdateCSS();
+						this.display();
+					});
+				if (index === 0) btn.setDisabled(true);
+			});
+
+			// Move down
+			s.addExtraButton(btn => {
+				btn.setIcon('arrow-down')
+					.setTooltip('Move down (lower priority)')
+					.onClick(async () => {
+						const entries = this.plugin.settings.entries;
+						if (index >= entries.length - 1) return;
+						[entries[index], entries[index + 1]] = [entries[index + 1], entries[index]];
+						await this.plugin.saveSettings();
+						this.plugin.debounceUpdateCSS();
+						this.display();
+					});
+				if (index >= this.plugin.settings.entries.length - 1) btn.setDisabled(true);
+			});
+
+			// Delete
 			s.addExtraButton((cb) => {
 				cb.setIcon("cross")
-					.setTooltip("Delete Entry")
+					.setTooltip("Delete entry")
 					.onClick(async () => {
 						this.plugin.settings.entries.splice(index, 1);
 						await this.plugin.saveSettings();
@@ -640,7 +821,6 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 						this.plugin.debounceUpdateCSS();
 					});
 			});
-
 		});
 
 

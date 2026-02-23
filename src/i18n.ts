@@ -11,6 +11,7 @@ const EN = {
 			},
 			toggle: "Toggle",
 			addEntryToHide: "Add metadata property entry to hide",
+			addEntry: "Add rule",
 		},
 		autoFold: {
 			name: "Auto fold metadata properties table",
@@ -37,6 +38,7 @@ const ZH = {
 			},
 			toggle: "开关",
 			addEntryToHide: "添加要隐藏的元数据属性条目",
+			addEntry: "添加规则",
 		},
 		autoFold: {
 			name: "自动折叠元数据属性表格",
@@ -62,6 +64,7 @@ const ZH_TW = {
 			},
 			toggle: "開關",
 			addEntryToHide: "新增要隱藏的元數據屬性項目",
+			addEntry: "新增規則",
 		},
 		autoFold: {
 			name: "自動折疊元數據屬性表格",
