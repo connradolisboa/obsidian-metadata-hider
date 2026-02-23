@@ -17,8 +17,14 @@ interface entrySettings {
 	valueCondition: string;  // Phase 2: fire only when property value matches (empty = any)
 	hide: entryHideSettings; // only meaningful when action === 'hide'
 }
+// Phase 3: scoped auto-fold rule
+interface autoFoldRule {
+	folderFilter: string;
+	tagFilter: string;
+}
 interface MetadataHiderSettings {
 	autoFold: boolean;
+	autoFoldRules: autoFoldRule[]; // Phase 3: NEW — scoped auto-fold rules
 	hideEmptyEntry: boolean;
 	hideEmptyEntryInSideDock: boolean;
 	propertiesVisible: string;
@@ -28,6 +34,7 @@ interface MetadataHiderSettings {
 
 const DEFAULT_SETTINGS: MetadataHiderSettings = {
 	autoFold: false,
+	autoFoldRules: [],
 	hideEmptyEntry: true,
 	hideEmptyEntryInSideDock: false,
 	propertiesVisible: "",
@@ -35,7 +42,8 @@ const DEFAULT_SETTINGS: MetadataHiderSettings = {
 	entries: [],
 }
 
-function isEntryApplicable(entry: entrySettings, file: TFile | null, app: App): boolean {
+// Accepts entrySettings or autoFoldRule (both have folderFilter/tagFilter)
+function isEntryApplicable(entry: { folderFilter?: string; tagFilter?: string }, file: TFile | null, app: App): boolean {
 	if (!entry.folderFilter?.trim() && !entry.tagFilter?.trim()) return true;
 	if (!file) return false;
 
@@ -266,8 +274,13 @@ export default class MetadataHider extends Plugin {
 			}
 		});
 
-		this.registerEvent(this.app.workspace.on('file-open', (_file) => {
-			if (this.settings.autoFold) {
+		// Phase 3: fire auto-fold if global setting OR any scoped autoFoldRule matches
+		this.registerEvent(this.app.workspace.on('file-open', (file) => {
+			const shouldFold = this.settings.autoFold ||
+				(file !== null && this.settings.autoFoldRules.some(rule =>
+					isEntryApplicable(rule, file, this.app)
+				));
+			if (shouldFold) {
 				const metadataElement = document.querySelector('.workspace-leaf.mod-active .metadata-container');
 				if (!metadataElement?.classList.contains('is-collapsed')) {
 					// @ts-ignore
@@ -319,6 +332,10 @@ export default class MetadataHider extends Plugin {
 		// Ensure all fields have defaults on existing entries (handles older saved data)
 		this.settings.entries = (this.settings.entries as any[]).map(e =>
 			Object.assign({ isRegex: false, folderFilter: '', tagFilter: '', action: 'hide', valueCondition: '' }, e)
+		);
+		// Phase 3: ensure autoFoldRules exists with defaults
+		this.settings.autoFoldRules = ((this.settings.autoFoldRules as any[]) ?? []).map(r =>
+			Object.assign({ folderFilter: '', tagFilter: '' }, r)
 		);
 	}
 
@@ -492,6 +509,9 @@ class ImportSettingsModal extends Modal {
 						this.plugin.settings.entries = (this.plugin.settings.entries as any[]).map(e =>
 							Object.assign({ isRegex: false, folderFilter: '', tagFilter: '', action: 'hide', valueCondition: '' }, e)
 						);
+						this.plugin.settings.autoFoldRules = ((this.plugin.settings.autoFoldRules as any[]) ?? []).map(r =>
+							Object.assign({ folderFilter: '', tagFilter: '' }, r)
+						);
 						await this.plugin.saveSettings();
 						this.plugin.debounceUpdateCSS();
 						this.settingsTab.display();
@@ -515,6 +535,10 @@ class ImportSettingsModal extends Modal {
 
 class MetadataHiderSettingTab extends PluginSettingTab {
 	plugin: MetadataHider;
+	// Phase 4: track which entry indices are expanded in the accordion
+	expandedEntries: Set<number> = new Set();
+	// Phase 4: source index for drag-to-reorder
+	dragSourceIndex = -1;
 
 	constructor(app: App, plugin: MetadataHider) {
 		super(app, plugin);
@@ -551,6 +575,7 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 				})
 			);
 
+		// === Auto-fold (global toggle + Phase 3 scoped rules) ===
 		new Setting(containerEl)
 			.setName(ts.autoFold.name)
 			.setDesc(ts.autoFold.desc)
@@ -561,8 +586,66 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 						this.plugin.settings.autoFold = value;
 						await this.plugin.saveSettings();
 						this.plugin.debounceUpdateCSS();
+						this.display();
 					});
 			});
+
+		// Phase 3: auto-fold rules sub-section
+		if (this.plugin.settings.autoFold) {
+			containerEl.createEl('p', {
+				text: 'Global auto-fold is ON — all files are folded on open. The scoped rules below are redundant while the global toggle is enabled.',
+				cls: 'mh-autofold-note',
+			});
+		}
+
+		new Setting(containerEl)
+			.setName('Auto-fold rules')
+			.setDesc('Fold the metadata table on open for specific folders or tags (independent of the global toggle above).')
+			.addButton(btn =>
+				btn.setButtonText('+')
+					.setTooltip('Add auto-fold rule')
+					.setCta()
+					.onClick(async () => {
+						this.plugin.settings.autoFoldRules.push({ folderFilter: '', tagFilter: '' });
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		this.plugin.settings.autoFoldRules.forEach((rule, ruleIndex) => {
+			const rs = new Setting(containerEl);
+			rs.setClass('mh-autofold-rule');
+			rs.nameEl.createEl('span', { text: `Rule ${ruleIndex + 1}`, cls: 'mh-autofold-rule-label' });
+			rs.addText(cb => {
+				cb.setPlaceholder('folder/')
+					.setValue(rule.folderFilter ?? '')
+					.onChange(async (value: string) => {
+						this.plugin.settings.autoFoldRules[ruleIndex].folderFilter = value.trim();
+						await this.plugin.saveSettings();
+					});
+				cb.inputEl.title = 'Fold in files under this folder (e.g. Projects/)';
+				cb.inputEl.style.width = '110px';
+			});
+			rs.addText(cb => {
+				cb.setPlaceholder('#tag')
+					.setValue(rule.tagFilter ?? '')
+					.onChange(async (value: string) => {
+						this.plugin.settings.autoFoldRules[ruleIndex].tagFilter = value.trim();
+						await this.plugin.saveSettings();
+					});
+				cb.inputEl.title = 'Fold in files with this tag (e.g. #work)';
+				cb.inputEl.style.width = '110px';
+			});
+			rs.addExtraButton(btn =>
+				btn.setIcon('cross')
+					.setTooltip('Delete rule')
+					.onClick(async () => {
+						this.plugin.settings.autoFoldRules.splice(ruleIndex, 1);
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+		});
 
 		new Setting(containerEl)
 			.setName({ en: "Metadata properties that keep displaying", zh: "永远显示的文档属性（元数据）", "zh-TW": "永遠顯示的文件屬性（元數據）" }[lang] as string)
@@ -652,31 +735,48 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 								allProperties: false,
 							}
 						});
+						// Phase 4: auto-expand the new entry
+						this.expandedEntries.add(this.plugin.settings.entries.length - 1);
 						await this.plugin.saveSettings();
 						this.display();
 					});
 			})
 		addEntryButton.descEl.append(
-			createDiv({ text: `Action: Hide — apply hide targets below | Show — always show the property` }),
+			createDiv({ text: `Action: Hide — apply hide targets | Show — always show the property` }),
 			createDiv({ text: `${ts.entries.toggle} 1: ${ts.entries.hide.tableInactive}` }),
 			createDiv({ text: `${ts.entries.toggle} 2: ${ts.entries.hide.tableActive}` }),
 			createDiv({ text: `${ts.entries.toggle} 3: ${ts.entries.hide.fileProperties}` }),
 			createDiv({ text: `${ts.entries.toggle} 4: ${ts.entries.hide.allProperties}` }),
-			createDiv({ text: `Value: fire rule only when property value matches (comma-separated, case-insensitive)` }),
+			createDiv({ text: `Expand (▼) for regex, folder/tag scope, and value condition filters.` }),
 			createDiv({ text: `Rules are evaluated top-to-bottom; the first matching rule wins.` }),
 		)
 
+		// Phase 4: render each entry in a container div that supports drag-to-reorder
 		this.plugin.settings.entries.forEach((entrySetting, index) => {
-			const s = new Setting(this.containerEl);
+			const entryContainer = containerEl.createDiv({ cls: 'mh-entry-container' });
+
+			// ── Main row ──
+			const s = new Setting(entryContainer);
 			s.setClass("metadata-hider-setting-entry");
+
+			// Phase 4: drag handle — pointer-down enables dragging on the container
+			s.addExtraButton(btn => {
+				btn.setIcon('grip-vertical')
+					.setTooltip('Drag to reorder');
+				btn.extraSettingsEl.classList.add('mh-drag-handle');
+				btn.extraSettingsEl.addEventListener('pointerdown', () => {
+					entryContainer.setAttribute('draggable', 'true');
+				});
+			});
+
+			// Phase 4: priority badge
+			s.nameEl.createEl('span', { text: `#${index + 1}`, cls: 'mh-priority-badge' });
 
 			// Property name input with autocomplete
 			s.addText((cb) => {
 				cb.setPlaceholder(entrySetting.isRegex ? 'regex pattern' : 'property name')
 					.setValue(entrySetting.name)
 					.onChange(async (newValue) => {
-						// Phase 1a: duplicate-name check removed — multiple rules for the same
-						// property are now allowed (first-match-wins determines which fires).
 						this.plugin.settings.entries[index].name = newValue.trim();
 						await this.plugin.saveSettings();
 						this.plugin.debounceUpdateCSS();
@@ -698,18 +798,6 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 					});
 				if (isShow) btn.setCta();
 			});
-
-			// Regex toggle
-			s.addToggle(toggle =>
-				toggle
-					.setValue(entrySetting.isRegex)
-					.setTooltip('Regex: treat name as a regular expression')
-					.onChange(async (value) => {
-						this.plugin.settings.entries[index].isRegex = value;
-						await this.plugin.saveSettings();
-						this.plugin.debounceUpdateCSS();
-					})
-			);
 
 			// Hide-mode toggles — only shown when action === 'hide'
 			if (entrySetting.action !== 'show') {
@@ -741,43 +829,26 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 				}
 			}
 
-			// Folder filter
-			s.addText(cb => {
-				cb.setPlaceholder('folder/')
-					.setValue(entrySetting.folderFilter ?? '')
-					.onChange(async (value: string) => {
-						this.plugin.settings.entries[index].folderFilter = value.trim();
-						await this.plugin.saveSettings();
-						this.plugin.debounceUpdateCSS();
-					});
-				cb.inputEl.title = 'Apply only in files under this folder (e.g. Projects/)';
-				cb.inputEl.style.width = '90px';
-			});
-
-			// Tag filter
-			s.addText(cb => {
-				cb.setPlaceholder('#tag')
-					.setValue(entrySetting.tagFilter ?? '')
-					.onChange(async (value: string) => {
-						this.plugin.settings.entries[index].tagFilter = value.trim();
-						await this.plugin.saveSettings();
-						this.plugin.debounceUpdateCSS();
-					});
-				cb.inputEl.title = 'Apply only in files with this tag (e.g. #work)';
-				cb.inputEl.style.width = '90px';
-			});
-
-			// Phase 2: Value condition input
-			s.addText(cb => {
-				cb.setPlaceholder('value equals…')
-					.setValue(entrySetting.valueCondition ?? '')
-					.onChange(async (value: string) => {
-						this.plugin.settings.entries[index].valueCondition = value.trim();
-						await this.plugin.saveSettings();
-						this.plugin.debounceUpdateCSS();
-					});
-				cb.inputEl.title = 'Fire rule only when property value equals this. Comma-separate multiple values. Case-insensitive. Leave empty for any value.';
-				cb.inputEl.style.width = '110px';
+			// Phase 4: expand/collapse toggle for filter options
+			const hasFilters = !!(
+				entrySetting.folderFilter?.trim() ||
+				entrySetting.tagFilter?.trim() ||
+				entrySetting.valueCondition?.trim() ||
+				entrySetting.isRegex
+			);
+			const isExpanded = this.expandedEntries.has(index);
+			s.addExtraButton(btn => {
+				btn.setIcon(isExpanded ? 'chevron-up' : 'chevron-down')
+					.setTooltip(isExpanded ? 'Collapse filter options' : 'Expand filter options');
+				if (hasFilters) btn.extraSettingsEl.classList.add('mh-filter-active');
+				btn.onClick(() => {
+					if (this.expandedEntries.has(index)) {
+						this.expandedEntries.delete(index);
+					} else {
+						this.expandedEntries.add(index);
+					}
+					this.display();
+				});
 			});
 
 			// Move up
@@ -788,6 +859,11 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 						if (index === 0) return;
 						const entries = this.plugin.settings.entries;
 						[entries[index - 1], entries[index]] = [entries[index], entries[index - 1]];
+						// Maintain expand state across the swap
+						const wasExpandedPrev = this.expandedEntries.has(index - 1);
+						const wasExpandedCurr = this.expandedEntries.has(index);
+						if (wasExpandedPrev) this.expandedEntries.add(index); else this.expandedEntries.delete(index);
+						if (wasExpandedCurr) this.expandedEntries.add(index - 1); else this.expandedEntries.delete(index - 1);
 						await this.plugin.saveSettings();
 						this.plugin.debounceUpdateCSS();
 						this.display();
@@ -803,6 +879,11 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 						const entries = this.plugin.settings.entries;
 						if (index >= entries.length - 1) return;
 						[entries[index], entries[index + 1]] = [entries[index + 1], entries[index]];
+						// Maintain expand state across the swap
+						const wasExpandedCurr = this.expandedEntries.has(index);
+						const wasExpandedNext = this.expandedEntries.has(index + 1);
+						if (wasExpandedCurr) this.expandedEntries.add(index + 1); else this.expandedEntries.delete(index + 1);
+						if (wasExpandedNext) this.expandedEntries.add(index); else this.expandedEntries.delete(index);
 						await this.plugin.saveSettings();
 						this.plugin.debounceUpdateCSS();
 						this.display();
@@ -816,10 +897,144 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 					.setTooltip("Delete entry")
 					.onClick(async () => {
 						this.plugin.settings.entries.splice(index, 1);
+						// Shift expanded indices after deletion
+						const newExpanded = new Set<number>();
+						this.expandedEntries.forEach(i => {
+							if (i < index) newExpanded.add(i);
+							else if (i > index) newExpanded.add(i - 1);
+							// i === index is dropped
+						});
+						this.expandedEntries = newExpanded;
 						await this.plugin.saveSettings();
 						this.display();
 						this.plugin.debounceUpdateCSS();
 					});
+			});
+
+			// ── Collapsible filter/detail row (Phase 4: accordion) ──
+			if (isExpanded) {
+				const detailSetting = new Setting(entryContainer);
+				detailSetting.setClass('mh-entry-details');
+
+				// Label area
+				detailSetting.nameEl.createEl('span', { text: 'Filters', cls: 'mh-detail-label' });
+
+				// Regex toggle
+				detailSetting.addToggle(toggle =>
+					toggle
+						.setValue(entrySetting.isRegex)
+						.setTooltip('Regex: treat name as a regular expression')
+						.onChange(async (value) => {
+							this.plugin.settings.entries[index].isRegex = value;
+							await this.plugin.saveSettings();
+							this.plugin.debounceUpdateCSS();
+							this.display();
+						})
+				);
+				detailSetting.controlEl.createEl('span', { text: 'Regex', cls: 'mh-detail-label' });
+
+				// Folder filter
+				detailSetting.addText(cb => {
+					cb.setPlaceholder('folder/')
+						.setValue(entrySetting.folderFilter ?? '')
+						.onChange(async (value: string) => {
+							this.plugin.settings.entries[index].folderFilter = value.trim();
+							await this.plugin.saveSettings();
+							this.plugin.debounceUpdateCSS();
+						});
+					cb.inputEl.title = 'Apply only in files under this folder (e.g. Projects/)';
+					cb.inputEl.style.width = '90px';
+				});
+
+				// Tag filter
+				detailSetting.addText(cb => {
+					cb.setPlaceholder('#tag')
+						.setValue(entrySetting.tagFilter ?? '')
+						.onChange(async (value: string) => {
+							this.plugin.settings.entries[index].tagFilter = value.trim();
+							await this.plugin.saveSettings();
+							this.plugin.debounceUpdateCSS();
+						});
+					cb.inputEl.title = 'Apply only in files with this tag (e.g. #work)';
+					cb.inputEl.style.width = '90px';
+				});
+
+				// Phase 2: Value condition input
+				detailSetting.addText(cb => {
+					cb.setPlaceholder('value equals…')
+						.setValue(entrySetting.valueCondition ?? '')
+						.onChange(async (value: string) => {
+							this.plugin.settings.entries[index].valueCondition = value.trim();
+							await this.plugin.saveSettings();
+							this.plugin.debounceUpdateCSS();
+						});
+					cb.inputEl.title = 'Fire rule only when property value equals this. Comma-separate multiple values. Case-insensitive. Leave empty for any value.';
+					cb.inputEl.style.width = '110px';
+				});
+			}
+
+			// ── Drag-to-reorder events (Phase 4) ──
+			entryContainer.addEventListener('dragstart', (e: DragEvent) => {
+				this.dragSourceIndex = index;
+				entryContainer.classList.add('mh-drag-source');
+				if (e.dataTransfer) {
+					e.dataTransfer.effectAllowed = 'move';
+					e.dataTransfer.setData('text/plain', String(index));
+				}
+			});
+
+			entryContainer.addEventListener('dragend', () => {
+				entryContainer.setAttribute('draggable', 'false');
+				entryContainer.classList.remove('mh-drag-source');
+				containerEl.querySelectorAll('.mh-drag-over').forEach(el =>
+					el.classList.remove('mh-drag-over')
+				);
+			});
+
+			entryContainer.addEventListener('dragover', (e: DragEvent) => {
+				e.preventDefault();
+				if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+				entryContainer.classList.add('mh-drag-over');
+			});
+
+			entryContainer.addEventListener('dragleave', (e: DragEvent) => {
+				if (!entryContainer.contains(e.relatedTarget as Node)) {
+					entryContainer.classList.remove('mh-drag-over');
+				}
+			});
+
+			entryContainer.addEventListener('drop', async (e: DragEvent) => {
+				e.preventDefault();
+				entryContainer.classList.remove('mh-drag-over');
+				const fromIndex = this.dragSourceIndex;
+				const toIndex = index;
+				if (fromIndex === -1 || fromIndex === toIndex) return;
+
+				const entries = this.plugin.settings.entries;
+				const [moved] = entries.splice(fromIndex, 1);
+				entries.splice(toIndex, 0, moved);
+
+				// Update expanded indices after reorder
+				const newExpanded = new Set<number>();
+				this.expandedEntries.forEach(i => {
+					if (i === fromIndex) {
+						newExpanded.add(toIndex);
+					} else if (fromIndex < toIndex) {
+						// Items in (fromIndex, toIndex] shift left by 1
+						if (i > fromIndex && i <= toIndex) newExpanded.add(i - 1);
+						else newExpanded.add(i);
+					} else {
+						// Items in [toIndex, fromIndex) shift right by 1
+						if (i >= toIndex && i < fromIndex) newExpanded.add(i + 1);
+						else newExpanded.add(i);
+					}
+				});
+				this.expandedEntries = newExpanded;
+				this.dragSourceIndex = -1;
+
+				await this.plugin.saveSettings();
+				this.plugin.debounceUpdateCSS();
+				this.display();
 			});
 		});
 

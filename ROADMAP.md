@@ -132,7 +132,7 @@ They cannot be expressed in static CSS since CSS does not see frontmatter values
 
 ---
 
-## Phase 3 — Auto-fold per folder / tag
+## ✅ Phase 3 — Auto-fold per folder / tag (completed v1.3.0)
 
 **Goal:** Trigger metadata table auto-fold only for specific folders or tags rather than for
 every file.
@@ -171,7 +171,7 @@ Fold fires on `file-open` if:
 
 ---
 
-## Phase 4 — UI polish and drag-to-reorder
+## ✅ Phase 4 — UI polish and drag-to-reorder (completed v1.4.0)
 
 **Goal:** Make priority order clear and easy to manage.
 
@@ -204,12 +204,12 @@ Phase 2  ✅ DONE
   └── 2c. Add metadata-cache-changed listener
   └── 2d. Add valueCondition UI input per entry
 
-Phase 3  (auto-fold rules)
+Phase 3  ✅ DONE
   └── 3a. Add autoFoldRules to settings + migration
   └── 3b. Update file-open handler
   └── 3c. Add autoFoldRules UI section
 
-Phase 4  (polish)
+Phase 4  ✅ DONE
   └── 4a. Drag-to-reorder (or Up/Down buttons already added in 1f)
   └── 4b. Priority badges
   └── 4c. Expanded entry accordion layout
@@ -235,5 +235,5 @@ compat, but the Phase 1 rules are the recommended way forward for context-sensit
 |-------|------------------|-----------|
 | 1     | 1.1.0            | ✅ Done   |
 | 2     | 1.2.0            | ✅ Done   |
-| 3     | 1.3.0            | Pending   |
-| 4     | 1.4.0            | Pending   |
+| 3     | 1.3.0            | ✅ Done   |
+| 4     | 1.4.0            | ✅ Done   |
