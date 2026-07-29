@@ -82,3 +82,8 @@
 	font-size: 0.82em;
 	color: var(--text-muted);
 }
+
+/* Search: hide entries that don't match the current filter query */
+.mh-entry-container.mh-entry-hidden {
+	display: none;
+}

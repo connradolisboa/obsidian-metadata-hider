@@ -581,6 +581,54 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 	expandedEntries: Set<number> = new Set();
 	// Phase 4: source index for drag-to-reorder
 	dragSourceIndex = -1;
+	// Search: filter query for the entries list + rendered rows for live filtering
+	searchQuery = '';
+	entryRows: { container: HTMLElement; entry: entrySettings }[] = [];
+	addPromptEl: HTMLElement;
+	addPromptButton: ButtonComponent;
+
+	/** Re-applies the search filter to already-rendered entry rows without a full re-render (keeps input focus). */
+	filterEntryRows(): void {
+		const query = this.searchQuery.trim().toLowerCase();
+		for (const row of this.entryRows) {
+			const match = !query || row.entry.name.toLowerCase().includes(query);
+			row.container.toggleClass('mh-entry-hidden', !match);
+		}
+		if (this.addPromptEl && this.addPromptButton) {
+			const exactMatch = query !== '' && this.plugin.settings.entries.some(e => e.name.toLowerCase() === query);
+			if (query && !exactMatch) {
+				this.addPromptEl.style.display = '';
+				this.addPromptButton.setButtonText(`+ Add "${this.searchQuery.trim()}" as new rule`);
+			} else {
+				this.addPromptEl.style.display = 'none';
+			}
+		}
+	}
+
+	/** Adds a new entry at the top of the list (new rules take priority and are evaluated first). */
+	async addNewEntry(name: string): Promise<void> {
+		this.plugin.settings.entries.unshift({
+			name: name.trim(),
+			isRegex: false,
+			folderFilter: '',
+			tagFilter: '',
+			action: 'hide',
+			valueCondition: '',
+			hide: {
+				tableInactive: true,
+				tableActive: false,
+				fileProperties: false,
+				allProperties: false,
+			}
+		});
+		// Every existing entry shifted down by one index; the new entry is at index 0.
+		this.expandedEntries = new Set([...this.expandedEntries].map(i => i + 1));
+		this.expandedEntries.add(0);
+		this.searchQuery = '';
+		await this.plugin.saveSettings();
+		this.plugin.debounceUpdateCSS();
+		this.display();
+	}
 
 	constructor(app: App, plugin: MetadataHider) {
 		super(app, plugin);
@@ -755,6 +803,45 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 			datalist.createEl('option', { value: key });
 		});
 
+		// Search / filter entries, with an inline affordance to add a new rule when no match exists
+		this.entryRows = [];
+		const searchSetting = new Setting(containerEl)
+			.setName('Search rules')
+			.setDesc('Filter rules by property name. If nothing matches, add it as a new rule.');
+		let searchInputEl: HTMLInputElement;
+		searchSetting.addText(cb => {
+			cb.setPlaceholder('Search or add property name...')
+				.setValue(this.searchQuery)
+				.onChange((value) => {
+					this.searchQuery = value;
+					this.filterEntryRows();
+				});
+			searchInputEl = cb.inputEl;
+			searchInputEl.style.width = '220px';
+			searchInputEl.addEventListener('keydown', (e: KeyboardEvent) => {
+				if (e.key === 'Enter' && this.addPromptEl && this.addPromptEl.style.display !== 'none') {
+					e.preventDefault();
+					this.addPromptButton.buttonEl.click();
+				}
+			});
+		});
+
+		const addPromptSetting = new Setting(containerEl).setClass('mh-add-prompt-setting');
+		addPromptSetting.settingEl.style.display = 'none';
+		this.addPromptEl = addPromptSetting.settingEl;
+		addPromptSetting.addButton(btn => {
+			this.addPromptButton = btn;
+			btn.setCta().onClick(async () => {
+				const name = this.searchQuery.trim();
+				if (!name) return;
+				if (this.plugin.settings.entries.some(e => e.name.toLowerCase() === name.toLowerCase())) {
+					new Notice(`There is already a rule named "${name}"!`);
+					return;
+				}
+				await this.addNewEntry(name);
+			});
+		});
+
 		let addEntryButton = new Setting(containerEl)
 			.setName(ts.entries.addEntry)
 			.addButton((button: ButtonComponent) => {
@@ -765,24 +852,7 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 							new Notice(`There is still an unnamed entry!`);
 							return;
 						}
-						this.plugin.settings.entries.push({
-							name: "",
-							isRegex: false,
-							folderFilter: "",
-							tagFilter: "",
-							action: "hide",
-							valueCondition: "",
-							hide: {
-								tableInactive: true,
-								tableActive: false,
-								fileProperties: false,
-								allProperties: false,
-							}
-						});
-						// Phase 4: auto-expand the new entry
-						this.expandedEntries.add(this.plugin.settings.entries.length - 1);
-						await this.plugin.saveSettings();
-						this.display();
+						await this.addNewEntry("");
 					});
 			})
 		addEntryButton.descEl.append(
@@ -798,6 +868,7 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 		// Phase 4: render each entry in a container div that supports drag-to-reorder
 		this.plugin.settings.entries.forEach((entrySetting, index) => {
 			const entryContainer = containerEl.createDiv({ cls: 'mh-entry-container' });
+			this.entryRows.push({ container: entryContainer, entry: entrySetting });
 
 			// ── Main row ──
 			const s = new Setting(entryContainer);
@@ -1082,6 +1153,7 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 			});
 		});
 
+		this.filterEntryRows();
 
 		let noteEl = containerEl.createEl("p", {
 			text: {
