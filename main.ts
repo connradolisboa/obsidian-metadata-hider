@@ -248,6 +248,19 @@ export default class MetadataHider extends Plugin {
 				if (!matched) {
 					prop.classList.remove('mh-hide', 'mh-show');
 				}
+
+				// Hide-when-empty for date/datetime properties. These render as
+				// <input type="date"|"datetime-local">, which (unlike text/number inputs) doesn't
+				// support the placeholder attribute, so :placeholder-shown can't detect emptiness
+				// in CSS — the value has to be read from the live DOM instead.
+				if (this.settings.hideEmptyEntry) {
+					const dateInput = prop.querySelector<HTMLInputElement>(
+						'.metadata-property-value input[type="date"], .metadata-property-value input[type="datetime-local"]'
+					);
+					prop.classList.toggle('mh-hide-empty', !!dateInput && dateInput.value.trim() === '');
+				} else {
+					prop.classList.remove('mh-hide-empty');
+				}
 			});
 		});
 	}
@@ -439,16 +452,36 @@ function genAllCSS(plugin: MetadataHider): string {
 	content.push(`.metadata-property.mh-hide { display: none !important; }`);
 	content.push(`.metadata-property.mh-show { display: flex !important; }`);
 
+	// Show all metadata when the table is focused. This must be unconditional (not gated
+	// behind hideEmptyEntry) because per-entry "hide when table not active" rules below
+	// rely on it to reveal the property again once the table becomes active.
+	content.push(`.metadata-container.is-active .metadata-property { display: flex !important; }`);
+
 	if (s.hideEmptyEntry) {
 		content = content.concat([
-			// Show all metadata when it is focused
-			`.metadata-container.is-active .metadata-property { display: flex !important; }`,
 			/* * Hide the metadata that is empty */
+			// data-property-type lives on .metadata-property-value (the inner value element), not
+			// on .metadata-property (the row) — so these selectors match on the value element via
+			// :has(), never `.metadata-property[data-property-type=...]` directly.
+			//
+			// .mod-truncate was the pre-1.6 text-value span; recent Obsidian renders single-line
+			// text as a contentEditable .metadata-input-longtext div instead. Both selectors are
+			// kept so the rule matches across Obsidian versions.
 			`.metadata-container .metadata-property:has(.metadata-property-value .mod-truncate:empty),`,
-			`.metadata-container .metadata-property[data-property-type="number"]:has(input.metadata-input:not([value]):not(:focus)),`,
-			`.metadata-container .metadata-property[data-property-type="text"]:has(input[type="date"]),`,
+			`.metadata-container .metadata-property:has(.metadata-property-value .metadata-input-longtext:empty),`,
+			// The `value` DOM property Obsidian sets on these inputs is never reflected back to the
+			// `value` attribute (per the HTML "dirty value flag"), so [value]/:not([value]) can never
+			// detect emptiness here. :placeholder-shown reads the live value instead and is reliable
+			// for text-like input types (number included).
+			`.metadata-container .metadata-property:has(.metadata-property-value input.metadata-input-number:placeholder-shown),`,
 			`.metadata-container .metadata-property:has(.metadata-property-value .multi-select-container > .multi-select-input:first-child),`,
-			`.metadata-container .metadata-property[data-property-type="checkbox"]:has(input[type="checkbox"]:not(:checked)) {`,
+			// :checked reflects live checkbox state (unlike the [checked] attribute), so this one
+			// only needed the data-property-type fix above.
+			`.metadata-container .metadata-property:has(.metadata-property-value input.metadata-input-checkbox:not(:checked)),`,
+			// date/datetime-local inputs don't support the placeholder attribute at all, so
+			// :placeholder-shown never matches them — emptiness for those is detected via DOM
+			// inspection in applyConditionalHiding(), which toggles this class instead.
+			`.metadata-container .metadata-property.mh-hide-empty {`,
 			`	display: none;`,
 			`}`,
 		]);
