@@ -357,7 +357,7 @@ export default class MetadataHider extends Plugin {
 
 	updateCSS() {
 		this.styleTag = document.createElement('style');
-		this.styleTag.id = 'css-metadata-hider';
+		this.styleTag.id = 'css-metadata-hider-plus';
 		let headElement: HTMLElement = document.getElementsByTagName('head')[0];
 		const existingStyleTag = headElement.querySelector('#' + this.styleTag.id) as HTMLStyleElement | null;
 
@@ -905,7 +905,7 @@ class MetadataHiderSettingTab extends PluginSettingTab {
 
 			// ── Main row ──
 			const s = new Setting(entryContainer);
-			s.setClass("metadata-hider-setting-entry");
+			s.setClass("metadata-hider-plus-setting-entry");
 
 			// Phase 4: drag handle — pointer-down enables dragging on the container
 			s.addExtraButton(btn => {

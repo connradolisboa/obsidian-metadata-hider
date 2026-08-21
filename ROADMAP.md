@@ -1,4 +1,4 @@
-# Metadata Hider — Feature Roadmap
+# Metadata Hider Plus — Feature Roadmap
 
 Reference this file across chat sessions to track planned and completed work.
 

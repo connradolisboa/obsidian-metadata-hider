@@ -1,4 +1,4 @@
-I vibe-coded the fixes and improvements with Claude. All props to https://www.buymeacoffee.com/benature
+Independent fork of the original "Metadata Hider" plugin, re-identified as "Metadata Hider Plus" (own plugin ID, no shared updates) with vibe-coded fixes and improvements on top.
 
 Major fixes:
 	•	Fixed rule conflicts
@@ -19,7 +19,7 @@ Major new features:
 
 Overview
 
-Metadata Hider gives you complete control over which properties are visible in Obsidian.
+Metadata Hider Plus gives you complete control over which properties are visible in Obsidian.
 
 Hide, show, or conditionally control metadata based on:
 	•	Property name
@@ -256,7 +256,7 @@ Settings
 
 Open:
 
-Settings → Community Plugins → Metadata Hider
+Settings → Community Plugins → Metadata Hider Plus
 
 You can:
 	•	Add rules
@@ -319,23 +319,7 @@ Original functionality
 
 Install
 
-Community Plugins (recommended)
-
-Open:
-
-Settings → Community Plugins → Browse
-
-Search:
-
-Metadata Hider
-
-Install and enable.
-
-Or click:
-
-https://obsidian.md/plugins?id=metadata-hider
-
-⸻
+This is a personal fork, not published on the Community Plugins store. Install it via BRAT or manually.
 
 BRAT (beta)
 
@@ -345,7 +329,7 @@ BRAT plugin
 
 Add repository:
 
-https://github.com/Benature/obsidian-metadata-hider
+https://github.com/connradolisboa/obsidian-metadata-hider
 
 Enable plugin.
 
@@ -355,7 +339,7 @@ Build
 
 Clone repo:
 
-git clone https://github.com/Benature/obsidian-metadata-hider
+git clone https://github.com/connradolisboa/obsidian-metadata-hider
 
 Install:
 
@@ -378,18 +362,8 @@ Obsidian properties are powerful.
 
 But large vaults become cluttered.
 
-Metadata Hider gives you precise control.
+Metadata Hider Plus gives you precise control.
 
 Your metadata appears only when useful.
-
-⸻
-
-Support
-
-If this plugin helps you, consider supporting the developer:
-
-Buy Me a Coffee:
-
-https://www.buymeacoffee.com/benature
 
 

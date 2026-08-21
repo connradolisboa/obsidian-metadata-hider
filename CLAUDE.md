@@ -1,12 +1,14 @@
-# CLAUDE.md — Metadata Hider
+# CLAUDE.md — Metadata Hider Plus
 
 ## Project overview
 
-Obsidian community plugin (v1.0.2) that hides frontmatter/metadata properties based on user-defined rules. Users can hide empty properties, hide specific named properties, and control visibility across the editor table and side docks.
+Obsidian plugin (v1.0.2) that hides frontmatter/metadata properties based on user-defined rules. Users can hide empty properties, hide specific named properties, and control visibility across the editor table and side docks.
 
-- **Author:** Benature | **Min Obsidian:** 0.15.0 | **License:** MIT
-- Entry point: `main.ts` compiled to `main.js`.
-- Release artifacts: `main.js`, `manifest.json`, `styles.css`.
+Independent fork of the original "Metadata Hider" by Benature — renamed and re-identified (own plugin ID, no shared author/funding links) so it never conflicts with or auto-updates from the upstream plugin. The MIT LICENSE file retains the original copyright notice as required by the license.
+
+- **Author:** Connrado Lisboa | **Min Obsidian:** 0.15.0 | **License:** MIT
+- Entry point: `main.ts` compiled to `dist/main.js`.
+- Release artifacts: `dist/main.js`, `dist/manifest.json`, `dist/styles.css`.
 
 ---
 
@@ -34,9 +36,10 @@ obsidian-metadata-hider/
 │   └── util.ts          # string2list() helper
 ├── styles.css           # .mh-hide class (all-properties side dock)
 ├── manifest.json
-├── esbuild.config.mjs
+├── esbuild.config.mjs    # bundles to dist/, copies manifest.json + styles.css there
 ├── tsconfig.json        # strict mode
-└── package.json
+├── package.json
+└── dist/                # build output (gitignored) — main.js, manifest.json, styles.css
 ```
 
 ---
@@ -65,7 +68,7 @@ interface MetadataHiderSettings {
 
 ### CSS strategy
 
-Hiding is done via a dynamically injected `<style id="css-metadata-hider">` tag regenerated on every settings change. The all-properties side dock is the exception — `hideInAllProperties()` toggles `.mh-hide` directly on DOM elements because CSS injection doesn't reach it reliably.
+Hiding is done via a dynamically injected `<style id="css-metadata-hider-plus">` tag regenerated on every settings change. The all-properties side dock is the exception — `hideInAllProperties()` toggles `.mh-hide` directly on DOM elements because CSS injection doesn't reach it reliably.
 
 Key selectors:
 - `.metadata-property[data-property-key="X"]` — target a specific property row
@@ -87,11 +90,11 @@ Always use `registerEvent()` / `registerDomEvent()` so Obsidian cleans up on unl
 
 ## Testing
 
-Copy build artifacts to your vault and reload:
+Copy build artifacts from `dist/` to your vault and reload:
 ```
-<Vault>/.obsidian/plugins/metadata-hider/main.js
-<Vault>/.obsidian/plugins/metadata-hider/manifest.json
-<Vault>/.obsidian/plugins/metadata-hider/styles.css
+dist/main.js       → <Vault>/.obsidian/plugins/metadata-hider-plus/main.js
+dist/manifest.json → <Vault>/.obsidian/plugins/metadata-hider-plus/manifest.json
+dist/styles.css    → <Vault>/.obsidian/plugins/metadata-hider-plus/styles.css
 ```
 
 No automated test suite — test manually in Obsidian.

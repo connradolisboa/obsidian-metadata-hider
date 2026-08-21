@@ -1,6 +1,24 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import { copyFile, mkdir } from "node:fs/promises";
+
+const distDir = "dist";
+const staticAssets = ["manifest.json", "styles.css"];
+
+const copyStaticAssets = {
+	name: "copy-static-assets",
+	setup(build) {
+		build.onEnd(async (result) => {
+			if (result.errors.length > 0) return;
+
+			await mkdir(distDir, { recursive: true });
+			await Promise.all(
+				staticAssets.map((asset) => copyFile(asset, `${distDir}/${asset}`)),
+			);
+		});
+	},
+};
 
 const banner =
 `/*
@@ -37,7 +55,8 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "main.js",
+	outfile: `${distDir}/main.js`,
+	plugins: [copyStaticAssets],
 });
 
 if (prod) {
